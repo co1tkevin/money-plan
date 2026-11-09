@@ -566,7 +566,7 @@ with tab_hold:
     st.divider()
     st.subheader("定投计划")
     st.caption(
-        "「我的计划」保存后保持不变，有变化时改一次即可；建议金额按权益四类缺口加权分配，"
+        "「我的计划」保存后保持不变，有变化时改一次即可；建议金额按权益四类 + 黄金的缺口加权分配，"
         "每日 = 每月 ÷ 当月工作日数。不生成订单、不自动执行。"
     )
 
@@ -587,19 +587,19 @@ with tab_hold:
     suggested_daily = {r["资产类别"]: float(core.q2(core.D(r["每月参考"]) / bdays)) for r in dca}
 
     if st.button("把建议金额填入我的计划", key="dca_fill"):
-        data["dca_plan"] = {c: suggested_daily.get(c, 0.0) for c in core.EQUITY}
+        data["dca_plan"] = {c: suggested_daily.get(c, 0.0) for c in core.EQUITY + core.GOLD}
         save_data(data)
         st.session_state.pop("dca_editor", None)
         st.rerun()
 
-    current_plan = {c: float(core.q2(core.D((data.get("dca_plan") or {}).get(c, 0)))) for c in core.EQUITY}
+    current_plan = {c: float(core.q2(core.D((data.get("dca_plan") or {}).get(c, 0)))) for c in core.EQUITY + core.GOLD}
     plan_rows = [
         {
             "资产类别": c,
             "建议每日(元)": suggested_daily.get(c, 0.0),
             "我的计划·每日(元)": current_plan[c],
         }
-        for c in core.EQUITY
+        for c in core.EQUITY + core.GOLD
     ]
     edited_plan = st.data_editor(
         pd.DataFrame(plan_rows),
@@ -629,6 +629,41 @@ with tab_hold:
         )
     else:
         st.info("权益子类当前无正缺口（或未录入金额），建议金额不分配；我的计划仍可按自定义金额保存。")
+
+    # 一键登记：把今日计划金额计入持仓 + 写买入流水；同一天只允许登记一次
+    today_str = str(date.today())
+    already_logged = any(
+        str(t.get("日期", "")) == today_str and str(t.get("开仓逻辑", "")) == "每日定投"
+        for t in data.get("trades", [])
+    )
+    if st.button("一键登记今日定投（计入持仓 + 流水）", key="btn_dca_apply", width="stretch"):
+        entries = {c: core.q2(core.D(new_plan.get(c, 0))) for c in core.EQUITY + core.GOLD}
+        entries = {c: amt for c, amt in entries.items() if amt > 0}
+        if not entries:
+            st.warning("我的计划里还没有金额，先在上方表格里填每日金额。")
+        elif already_logged:
+            st.warning("今天已经登记过定投了，不能重复计入。")
+        else:
+            for cat, amt in entries.items():
+                current = core.q2(core.D(data["assets"][cat]["amount"]))
+                data["assets"][cat]["amount"] = float(current + amt)
+                data["trades"].append(
+                    {
+                        "基金名称": core.fund_label(data, cat),
+                        "日期": today_str,
+                        "方向": "买入",
+                        "金额": float(amt),
+                        "资产类别": cat,
+                        "开仓逻辑": "每日定投",
+                        "出场逻辑": "",
+                        "赎回费备注": "",
+                    }
+                )
+            save_data(data)
+            st.success(f"已登记今日定投：{sum(entries.values()):,.2f} 元，共 {len(entries)} 笔。")
+            st.rerun()
+    if already_logged:
+        st.caption("今日定投已登记。")
 
     with st.expander("建议分配明细（缺口 / 权重 / 每月参考）", expanded=False):
         dca_df = pd.DataFrame(dca)

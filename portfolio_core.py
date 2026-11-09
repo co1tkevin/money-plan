@@ -129,7 +129,7 @@ def normalize(raw: dict | None) -> dict:
     trades = raw.get("trades")
     base["trades"] = [t for t in trades if isinstance(t, dict)] if isinstance(trades, list) else []
     plan = raw.get("dca_plan") if isinstance(raw.get("dca_plan"), dict) else {}
-    base["dca_plan"] = {c: float(q2(D(plan.get(c, 0)))) for c in EQUITY}
+    base["dca_plan"] = {c: float(q2(D(plan.get(c, 0)))) for c in EQUITY + GOLD}
     return base
 
 
@@ -244,10 +244,10 @@ def business_days_in_month(day=None) -> int:
 
 
 def dca_rows(rows: list[dict], budget) -> tuple[list[dict], Decimal]:
-    """缺口加权定投：按权益四子类的正缺口占比分配预算。"""
+    """缺口加权定投：按权益四子类 + 黄金的正缺口占比分配预算。"""
     budget_d = q2(D(budget))
     bdays = max(business_days_in_month(), 1)
-    equity_rows = [r for r in rows if r["资产类别"] in EQUITY]
+    equity_rows = [r for r in rows if r["资产类别"] in EQUITY + GOLD]
     gaps = [max(ZERO, r["缺口金额"]) for r in equity_rows]
     gap_total = sum(gaps, ZERO)
     plan: list[dict] = []

@@ -564,8 +564,11 @@ with tab_hold:
     st.caption("理论值 = 设定目标 − (当前年龄 − 23) × 1pp；仅作规则对照，是否调整由使用者自行决定。")
 
     st.divider()
-    st.subheader("缺口加权定投（仅供参考）")
-    st.caption("按权益四个子类的缺口金额占比分配预算；不生成订单、不自动执行。")
+    st.subheader("定投计划")
+    st.caption(
+        "「我的计划」保存后保持不变，有变化时改一次即可；建议金额按权益四类缺口加权分配，"
+        "每日 = 每月 ÷ 当月工作日数。不生成订单、不自动执行。"
+    )
 
     budget = st.number_input(
         "每月定投预算（元）",
@@ -579,27 +582,71 @@ with tab_hold:
         data["monthly_budget"] = float(core.q2(core.D(budget)))
         save_data(data)
 
-    plan, gap_total = core.dca_rows(rows, budget)
-    plan_df = pd.DataFrame(plan)
-    for col in ("当前金额", "目标金额", "缺口金额", "权重%", "每月参考", "每日参考"):
-        plan_df[col] = plan_df[col].map(float)
-    st.dataframe(
-        plan_df,
+    bdays = core.business_days_in_month()
+    dca, gap_total = core.dca_rows(rows, budget)
+    suggested_daily = {r["资产类别"]: float(core.q2(core.D(r["每月参考"]) / bdays)) for r in dca}
+
+    if st.button("把建议金额填入我的计划", key="dca_fill"):
+        data["dca_plan"] = {c: suggested_daily.get(c, 0.0) for c in core.EQUITY}
+        save_data(data)
+        st.session_state.pop("dca_editor", None)
+        st.rerun()
+
+    current_plan = {c: float(core.q2(core.D((data.get("dca_plan") or {}).get(c, 0)))) for c in core.EQUITY}
+    plan_rows = [
+        {
+            "资产类别": c,
+            "建议每日(元)": suggested_daily.get(c, 0.0),
+            "我的计划·每日(元)": current_plan[c],
+        }
+        for c in core.EQUITY
+    ]
+    edited_plan = st.data_editor(
+        pd.DataFrame(plan_rows),
         hide_index=True,
         width="stretch",
+        num_rows="fixed",
+        key="dca_editor",
         column_config={
-            "当前金额": st.column_config.NumberColumn(format="%.2f"),
-            "目标金额": st.column_config.NumberColumn(format="%.2f"),
-            "缺口金额": st.column_config.NumberColumn(format="%.2f"),
-            "权重%": st.column_config.NumberColumn(format="%.1f"),
-            "每月参考": st.column_config.NumberColumn(format="%.2f"),
-            "每日参考": st.column_config.NumberColumn(format="%.2f"),
+            "资产类别": st.column_config.TextColumn(disabled=True, width="small"),
+            "建议每日(元)": st.column_config.NumberColumn(format="%.2f", disabled=True, help="按缺口加权：每月参考 ÷ 本月工作日数"),
+            "我的计划·每日(元)": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%.2f"),
         },
     )
+
+    new_plan = {}
+    for _, prow in edited_plan.iterrows():
+        new_plan[str(prow["资产类别"])] = float(core.q2(core.D(prow["我的计划·每日(元)"])))
+    if json.dumps(new_plan, sort_keys=True) != json.dumps(current_plan, sort_keys=True):
+        data["dca_plan"] = new_plan
+        save_data(data)
+
+    daily_total = sum(new_plan.values())
     if gap_total > 0:
-        st.caption(f"可分配缺口合计 {core.money_text(gap_total)} 元；月预算 {core.money_text(budget)} 元，按权重拆分；每日参考 = 每月 ÷ 30。")
+        st.caption(
+            f"可分配缺口合计 {core.money_text(gap_total)} 元；月预算 {core.money_text(budget)} 元，本月 {bdays} 个工作日。"
+            f"我的计划合计：每日 {daily_total:,.2f} 元 ≈ 每月 {daily_total * bdays:,.2f} 元。"
+        )
     else:
-        st.info("权益子类当前无正缺口（或未录入金额），权重不分配。")
+        st.info("权益子类当前无正缺口（或未录入金额），建议金额不分配；我的计划仍可按自定义金额保存。")
+
+    with st.expander("建议分配明细（缺口 / 权重 / 每月参考）", expanded=False):
+        dca_df = pd.DataFrame(dca)
+        for col in ("当前金额", "目标金额", "缺口金额", "权重%", "每月参考", "每日参考"):
+            dca_df[col] = dca_df[col].map(float)
+        st.dataframe(
+            dca_df,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "当前金额": st.column_config.NumberColumn(format="%.2f"),
+                "目标金额": st.column_config.NumberColumn(format="%.2f"),
+                "缺口金额": st.column_config.NumberColumn(format="%.2f"),
+                "权重%": st.column_config.NumberColumn(format="%.1f"),
+                "每月参考": st.column_config.NumberColumn(format="%.2f"),
+                "每日参考": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
 
 # ---------------------------------------------------------------- ③ 流水与复盘
 with tab_trade:

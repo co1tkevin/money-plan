@@ -10,8 +10,12 @@ create table if not exists public.user_portfolio (
   assets         jsonb not null default '{}'::jsonb,  -- {类别: {target, amount, name, code}}
   monthly_budget numeric not null default 2000,
   age            integer not null default 23,
+  dca_plan       jsonb not null default '{}'::jsonb,  -- {类别: 每日定投金额}
   updated_at     timestamptz not null default now()
 );
+
+-- 已有库的增量升级（新增 dca_plan 列，执行一次即可）：
+-- alter table public.user_portfolio add column if not exists dca_plan jsonb not null default '{}'::jsonb;
 
 -- 2) 交易流水（一笔交易一行）
 create table if not exists public.user_trades (

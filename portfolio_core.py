@@ -94,6 +94,7 @@ def default_data() -> dict:
         "monthly_budget": 2000.0,
         "age": BASE_AGE,
         "trades": [],
+        "dca_plan": {},
     }
 
 
@@ -127,6 +128,8 @@ def normalize(raw: dict | None) -> dict:
     base["age"] = _as_int(raw.get("age", BASE_AGE), BASE_AGE) or BASE_AGE
     trades = raw.get("trades")
     base["trades"] = [t for t in trades if isinstance(t, dict)] if isinstance(trades, list) else []
+    plan = raw.get("dca_plan") if isinstance(raw.get("dca_plan"), dict) else {}
+    base["dca_plan"] = {c: float(q2(D(plan.get(c, 0)))) for c in EQUITY}
     return base
 
 
@@ -230,9 +233,20 @@ def lifecycle(data: dict) -> dict:
     }
 
 
+def business_days_in_month(day=None) -> int:
+    """当月工作日（周一至周五）天数，用于把月预算折算成每个交易日的定投金额。"""
+    import calendar
+    from datetime import date as _date
+
+    day = day or _date.today()
+    _, days = calendar.monthrange(day.year, day.month)
+    return sum(1 for d in range(1, days + 1) if _date(day.year, day.month, d).weekday() < 5)
+
+
 def dca_rows(rows: list[dict], budget) -> tuple[list[dict], Decimal]:
     """缺口加权定投：按权益四子类的正缺口占比分配预算。"""
     budget_d = q2(D(budget))
+    bdays = max(business_days_in_month(), 1)
     equity_rows = [r for r in rows if r["资产类别"] in EQUITY]
     gaps = [max(ZERO, r["缺口金额"]) for r in equity_rows]
     gap_total = sum(gaps, ZERO)
@@ -248,7 +262,7 @@ def dca_rows(rows: list[dict], budget) -> tuple[list[dict], Decimal]:
                 "缺口金额": row["缺口金额"],
                 "权重%": weight,
                 "每月参考": monthly,
-                "每日参考": q2(monthly / Decimal(30)),
+                "每日参考": q2(monthly / Decimal(bdays)),
             }
         )
     return plan, q2(gap_total)

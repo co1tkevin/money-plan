@@ -321,6 +321,7 @@ class SupabaseAdapter(StorageAdapter):
             "assets": row.get("assets") or {},
             "monthly_budget": row.get("monthly_budget"),
             "age": row.get("age"),
+            "dca_plan": row.get("dca_plan") or {},
             "trades": [self._row_to_trade(t) for t in trades],
         }
 
@@ -330,6 +331,7 @@ class SupabaseAdapter(StorageAdapter):
             "assets": data.get("assets") or {},
             "monthly_budget": float(data.get("monthly_budget") or 0),
             "age": int(data.get("age") or 0),
+            "dca_plan": data.get("dca_plan") or {},
             "updated_at": _now_iso(),
         }
         rows = [dict(self._trade_to_row(t), user_id=self.user_id) for t in (data.get("trades") or []) if isinstance(t, dict)]

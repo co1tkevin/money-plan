@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+(function () {
+  // 通用的 localStorage 读写桥：由 storage_adapter.LocalStorageAdapter 传入 skey / action / value
+  var frameHeight = 1;
+
+  function post(type, data) {
+    var payload = Object.assign({ isStreamlitMessage: true, type: type }, data || {});
+    window.parent.postMessage(payload, "*");
+  }
+
+  function finish(value) {
+    post("streamlit:setComponentValue", { value: value, dataType: "json" });
+  }
+
+  function resize() {
+    post("streamlit:setFrameHeight", { height: frameHeight });
+  }
+
+  window.addEventListener("message", function (event) {
+    var message = event.data || {};
+    if (message.type !== "streamlit:render") return;
+    var args = message.args || {};
+    var nonce = args.nonce || null;
+    var storageKey = args.skey || "";
+    try {
+      if (args.action === "get") {
+        finish({ value: window.localStorage.getItem(storageKey), nonce: nonce, ok: true });
+      } else if (args.action === "set") {
+        if (args.value === null || args.value === undefined) {
+          window.localStorage.removeItem(storageKey);
+        } else {
+          window.localStorage.setItem(storageKey, args.value);
+        }
+        finish({ value: null, nonce: nonce, ok: true });
+      }
+    } catch (err) {
+      finish({ value: null, nonce: nonce, ok: false, error: String(err) });
+    }
+    resize();
+  });
+
+  post("streamlit:componentReady", { apiVersion: 1 });
+  resize();
+})();
+</script>
+</body>
+</html>

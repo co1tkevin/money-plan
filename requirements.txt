@@ -1,0 +1,10 @@
+# Web UI (main.py) + shared calculation module
+streamlit>=1.50
+pandas>=2.0
+
+# Fund NAV source for main.py (optional) and snapshot jobs (used when online).
+# Skip with `python snapshot_task.py --offline` if not installed.
+akshare>=1.12
+
+# Cloud storage / auth (optional). Without it the app keeps working on localStorage.
+supabase>=2.0

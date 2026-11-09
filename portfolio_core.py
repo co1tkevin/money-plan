@@ -460,3 +460,48 @@ def build_review(data: dict, rows: list[dict], today: date | None = None) -> tup
     lines.append("")
     lines.append("**复盘结论**：" + conclusion + "本段为事后行为回顾，不含买卖建议、择时判断或涨跌预测。")
     return "\n".join(lines), findings
+
+# ---------------------------------------------------------------- 展示统计（数据中心图表用）
+def asset_vs_invested(snapshots: list[dict], trades: list[dict]) -> list[dict]:
+    """按快照日期对齐：总资产 vs 累计净投入（买入 − 卖出）。仅用于图表展示，返回 float。"""
+    day_invest: dict[str, float] = {}
+    for t in trades:
+        day = str(t.get("日期", ""))[:10]
+        if not day:
+            continue
+        amt = float(D(t.get("金额")))
+        day_invest[day] = day_invest.get(day, 0.0) + (amt if t.get("方向") == "买入" else -amt)
+    out: list[dict] = []
+    run = 0.0
+    for s in sorted(snapshots, key=lambda x: str(x.get("date", ""))):
+        day = str(s.get("date", ""))[:10]
+        run += day_invest.get(day, 0.0)
+        out.append({"日期": day, "总资产": float(D(s.get("total_asset"))), "累计净投入": round(run, 2)})
+    return out
+
+
+def perf_stats(snapshots: list[dict]) -> dict:
+    """展示用统计：累计收益率%、年化波动率%、最大回撤%。快照不足时对应字段为 None。"""
+    import math
+    import statistics
+
+    rets = [float(D(s.get("daily_return"))) / 100.0 for s in sorted(snapshots, key=lambda x: str(x.get("date", "")))]
+    if not rets:
+        return {"累计收益率%": None, "年化波动率%": None, "最大回撤%": None}
+    idx = 1.0
+    curve = []
+    for r in rets:
+        idx *= 1.0 + r
+        curve.append(idx)
+    cum = (curve[-1] - 1.0) * 100.0
+    vol = statistics.pstdev(rets) * math.sqrt(252) * 100.0 if len(rets) > 1 else None
+    peak = curve[0]
+    mdd = 0.0
+    for v in curve:
+        peak = max(peak, v)
+        mdd = min(mdd, (v / peak - 1.0) * 100.0)
+    return {
+        "累计收益率%": round(cum, 2),
+        "年化波动率%": (round(vol, 2) if vol is not None else None),
+        "最大回撤%": round(mdd, 2),
+    }

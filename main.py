@@ -309,11 +309,67 @@ if cloud_errors:
 
 data = get_data()
 
-tab_hold, tab_life, tab_trade, tab_review, tab_data = st.tabs(
-    ["① 持仓与配置", "② 生命周期 · 定投", "③ 交易流水", "④ AI复盘", "⑤ 数据与快照"]
+# 各 tab 共用的计算结果
+rows, total = core.compute_rows(data)
+frame = rows_frame(rows)
+target_sum = sum((r["目标占比%"] for r in rows), core.ZERO)
+breaks = [r for r in rows if r["状态"]]
+plan = core.rebalance_plan(rows)
+snapshots = get_snapshots()
+
+tab_dash, tab_hold, tab_trade, tab_data = st.tabs(
+    ["① 总览", "② 持仓与定投", "③ 流水与复盘", "④ 数据中心"]
 )
 
-# ---------------------------------------------------------------- ① 持仓与配置
+# ---------------------------------------------------------------- ① 总览
+with tab_dash:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("总资产（元）", core.money_text(total))
+    m2.metric("目标占比合计", f"{float(target_sum):.1f}%", delta=f"{float(target_sum) - 100:+.1f}pp 相对100%")
+    m3.metric("越界观察类别", f"{len(breaks)} 类")
+    equity_pct = sum((r["实际占比%"] for r in rows if r["资产类别"] in core.EQUITY), core.ZERO)
+    m4.metric("权益实际占比", f"{float(equity_pct):.1f}%")
+
+    if abs(target_sum - 100) > core.D("0.05"):
+        st.warning(f"目标占比合计为 {float(target_sum):.1f}%，不等于 100%，请到 ② 页核对录入。")
+
+    # 调仓提醒：全系统唯一提醒位，越过 ±5pp 才出现
+    if plan["actions"]:
+        _pieces = [
+            f"{a['资产类别']} {float(a['偏离pp']):+.1f}pp → {a['动作']}约 {abs(float(a['建议金额'])):,.0f} 元"
+            for a in plan["actions"]
+        ]
+        st.warning(
+            "**需要再平衡**（越过 ±5pp）：" + "；".join(_pieces)
+            + f"。合计减仓 {abs(float(plan['sell_total'])):,.0f} 元 / 加仓 {float(plan['buy_total']):,.0f} 元。"
+            "金额按目标占比倒推，仅供参考，系统不执行任何交易。"
+        )
+    else:
+        st.success("各类别均在 ±5pp 以内，暂不需要再平衡。")
+
+    dash_left, dash_right = st.columns(2)
+    with dash_left:
+        st.markdown("**累计收益曲线**")
+        if snapshots:
+            history = core.cumulative_returns(snapshots)
+            mini_df = pd.DataFrame(
+                [{"日期": h["日期"], "累计收益率%": float(h["累计收益率%"])} for h in history]
+            ).set_index("日期")
+            st.line_chart(mini_df)
+        else:
+            st.caption("暂无快照；每日任务自动写入后，这里会展示组合累计收益走势。")
+    with dash_right:
+        st.markdown("**目标 vs 实际配置（%）**")
+        cfg_df = pd.DataFrame(
+            {
+                "资产类别": core.CATEGORIES,
+                "目标占比%": [float(r["目标占比%"]) for r in rows],
+                "实际占比%": [float(r["实际占比%"]) for r in rows],
+            }
+        ).set_index("资产类别")
+        st.bar_chart(cfg_df)
+
+# ---------------------------------------------------------------- ② 持仓与定投
 with tab_hold:
     st.subheader("持仓录入")
     st.caption("每类资产填写目标占比、当前金额、基金名称与代码；系统自动计算占比、偏离与缺口。")
@@ -357,37 +413,6 @@ with tab_hold:
     if json.dumps(new_assets, sort_keys=True) != json.dumps(data["assets"], sort_keys=True):
         data["assets"] = new_assets
         save_data(data)
-
-    rows, total = core.compute_rows(data)
-    frame = rows_frame(rows)
-    target_sum = sum((r["目标占比%"] for r in rows), core.ZERO)
-    breaks = [r for r in rows if r["状态"]]
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("总资产（元）", core.money_text(total))
-    m2.metric("目标占比合计", f"{float(target_sum):.1f}%", delta=f"{float(target_sum) - 100:+.1f}pp 相对100%")
-    m3.metric("越界观察类别", f"{len(breaks)} 类")
-    equity_pct = sum((r["实际占比%"] for r in rows if r["资产类别"] in core.EQUITY), core.ZERO)
-    m4.metric("权益实际占比", f"{float(equity_pct):.1f}%")
-
-    if abs(target_sum - 100) > core.D("0.05"):
-        st.warning(f"目标占比合计为 {float(target_sum):.1f}%，不等于 100%，请核对录入。")
-
-    plan = core.rebalance_plan(rows)
-
-    # 调仓提醒：全系统唯一提醒位，越过 ±5pp 才出现
-    if plan["actions"]:
-        _pieces = [
-            f"{a['资产类别']} {float(a['偏离pp']):+.1f}pp → {a['动作']}约 {abs(float(a['建议金额'])):,.0f} 元"
-            for a in plan["actions"]
-        ]
-        st.warning(
-            "**需要再平衡**（越过 ±5pp）：" + "；".join(_pieces)
-            + f"。合计减仓 {abs(float(plan['sell_total'])):,.0f} 元 / 加仓 {float(plan['buy_total']):,.0f} 元。"
-            "金额按目标占比倒推，仅供参考，系统不执行任何交易。"
-        )
-    else:
-        st.success("各类别均在 ±5pp 以内，暂不需要再平衡。")
 
     with st.expander("分类明细 · 再平衡计算 · 三大类汇总", expanded=False):
         st.markdown("**分类明细**")
@@ -509,8 +534,7 @@ with tab_hold:
             if not use_online:
                 st.caption("已关闭网络行情，仅手动录入。")
 
-# ---------------------------------------------------------------- ② 生命周期 · 定投
-with tab_life:
+    st.divider()
     st.subheader("生命周期规则")
     st.caption(f"基准年龄 {core.BASE_AGE} 岁：权益每年 −1pp，纯债每年 +1pp。此处仅展示理论目标，不修改任何持仓。")
 
@@ -577,7 +601,7 @@ with tab_life:
     else:
         st.info("权益子类当前无正缺口（或未录入金额），权重不分配。")
 
-# ---------------------------------------------------------------- ③ 交易流水
+# ---------------------------------------------------------------- ③ 流水与复盘
 with tab_trade:
     st.subheader("基金交易流水")
 
@@ -650,8 +674,7 @@ with tab_trade:
                 save_data(data)
                 st.rerun()
 
-# ---------------------------------------------------------------- ④ AI复盘
-with tab_review:
+    st.divider()
     st.subheader("AI复盘 · 事后行为回顾")
     st.caption("仅依据交易流水与当前持仓，核对是否遵守配置与再平衡规则；只做行为总结，不输出任何买卖建议、不预测涨跌。")
 
@@ -669,15 +692,10 @@ with tab_review:
                 st.success("本次复盘未发现与既定规则不一致的记录。")
             st.markdown(report)
 
-# ---------------------------------------------------------------- ⑤ 数据与快照
+# ---------------------------------------------------------------- ④ 数据中心
 with tab_data:
-    st.subheader("每日快照")
-    st.caption(
-        "快照记录当日总资产、组合当日收益率、各类资产市值/仓位/单日涨跌，以及每只基金的净值表现。"
-        f"当前快照存储：{store.label}。"
-    )
-
-    snapshots = get_snapshots()
+    st.subheader("数据中心")
+    st.caption(f"每日快照由定时任务自动写入（约每天 22:30）；图表基于全部历史快照计算。当前存储：{store.label}。")
 
     flash = st.session_state.pop("snap_flash", None)
     if flash:
@@ -687,42 +705,40 @@ with tab_data:
         st.success(sync_flash)
 
     snap_ready = snapshots is not None
-    if not snap_ready:
-        st.info("正在读取历史快照…")
 
-    if core.IS_CLOUD:
-        use_net = False
-        st.caption("云端模式：已关闭网络行情，快照中的单日涨跌按 0 记录。")
-    else:
-        use_net = st.toggle("拉取最新净值计算单日涨跌", value=True, key="snap_use_net")
-
-    if st.button("保存今日快照", type="primary", disabled=not snap_ready):
-        nav_map: dict = {}
-        errors: list[str] = []
-        if use_net:
-            with st.spinner("正在拉取净值…"):
-                nav_map, errors = core.collect_nav(data, cached_nav)
-        snapshot = core.build_snapshot(data, nav_map)
-        try:
-            updated = store.save_snapshot(snapshot)
-        except StorageNotReady:
-            st.error("浏览器存储尚未就绪，请稍后重试。")
+    with st.expander("手动补一条今日快照（一般由定时任务自动写入）", expanded=False):
+        if not snap_ready:
+            st.info("正在读取历史快照…")
+        if core.IS_CLOUD:
+            use_net = False
+            st.caption("云端模式：已关闭网络行情，快照中的单日涨跌按 0 记录。")
         else:
-            st.session_state["snapshots"] = updated
-            snapshots = updated
-            message = (
-                f"已保存 {snapshot['date']} 快照：总资产 {core.money_text(snapshot['total_asset'])} 元，"
-                f"组合当日 {snapshot['daily_return']:+.2f}%。"
-            )
-            st.session_state["snap_flash"] = message
-            st.success(message)
-            if errors:
-                st.warning("以下基金净值拉取失败，单日涨跌按 0 计：" + "；".join(errors[:6]))
+            use_net = st.toggle("拉取最新净值计算单日涨跌", value=True, key="snap_use_net")
+        if st.button("保存今日快照", type="primary", disabled=not snap_ready):
+            nav_map: dict = {}
+            errors: list[str] = []
+            if use_net:
+                with st.spinner("正在拉取净值…"):
+                    nav_map, errors = core.collect_nav(data, cached_nav)
+            snapshot = core.build_snapshot(data, nav_map)
+            try:
+                updated = store.save_snapshot(snapshot)
+            except StorageNotReady:
+                st.error("浏览器存储尚未就绪，请稍后重试。")
+            else:
+                st.session_state["snapshots"] = updated
+                snapshots = updated
+                message = (
+                    f"已保存 {snapshot['date']} 快照：总资产 {core.money_text(snapshot['total_asset'])} 元，"
+                    f"组合当日 {snapshot['daily_return']:+.2f}%。"
+                )
+                st.session_state["snap_flash"] = message
+                st.success(message)
+                if errors:
+                    st.warning("以下基金净值拉取失败，单日涨跌按 0 计：" + "；".join(errors[:6]))
 
-    st.divider()
-    st.markdown("**历史快照**")
     if not snapshots:
-        st.info("暂无快照记录。可点击上面的【保存今日快照】，或运行命令行脚本 snapshot_task.py 定时生成。")
+        st.info("暂无快照记录。等待每日任务写入，或在上方手动补一条。")
     else:
         history = core.cumulative_returns(snapshots)
         hist_df = pd.DataFrame(
@@ -736,6 +752,33 @@ with tab_data:
                 for h in history
             ]
         )
+        stats = core.perf_stats(snapshots)
+        s1, s2, s3 = st.columns(3)
+        s1.metric("累计收益率", f"{stats['累计收益率%']:+.2f}%" if stats["累计收益率%"] is not None else "—")
+        s2.metric("最大回撤", f"{stats['最大回撤%']:.2f}%" if stats["最大回撤%"] is not None else "—")
+        s3.metric("年化波动率", f"{stats['年化波动率%']:.2f}%" if stats["年化波动率%"] is not None else "—")
+
+        st.markdown("**总资产 vs 累计净投入**")
+        avi_df = pd.DataFrame(core.asset_vs_invested(snapshots, data["trades"])).set_index("日期")
+        st.line_chart(avi_df)
+        st.caption("累计净投入 = 交易流水按日累加（买入 − 卖出）；两线之差即浮盈/浮亏，流水不全时仅供参考。")
+
+        st.markdown("**每日涨跌（%）**")
+        st.bar_chart(hist_df.set_index("日期")[["当日收益率%"]])
+
+        st.markdown("**仓位漂移（堆叠面积，%）**")
+        drift_rows = []
+        for s in sorted(snapshots, key=lambda x: str(x.get("date", ""))):
+            detail = s.get("asset_detail") if isinstance(s.get("asset_detail"), dict) else {}
+            row = {"日期": str(s.get("date", ""))}
+            for c in core.CATEGORIES:
+                row[c] = float(core.D((detail.get(c) or {}).get("weight_pct")))
+            drift_rows.append(row)
+        drift_df = pd.DataFrame(drift_rows).set_index("日期")
+        st.area_chart(drift_df)
+        st.caption("单位为仓位占比（%），按快照日期排列；用于观察各类资产仓位随时间的变化。")
+
+        st.markdown("**历史快照明细**")
         st.dataframe(
             hist_df.iloc[::-1],
             hide_index=True,
@@ -747,21 +790,6 @@ with tab_data:
             },
         )
         st.caption(f"共 {len(history)} 条快照；累计收益率按每日收益率连乘计算，仅反映已保存快照的区间表现。")
-
-        st.markdown("**组合累计收益曲线**")
-        st.line_chart(hist_df.set_index("日期")[["累计收益率%"]])
-
-        st.markdown("**历史仓位漂移**")
-        drift_rows = []
-        for s in sorted(snapshots, key=lambda x: str(x.get("date", ""))):
-            detail = s.get("asset_detail") if isinstance(s.get("asset_detail"), dict) else {}
-            row = {"日期": str(s.get("date", ""))}
-            for c in core.CATEGORIES:
-                row[c] = float(core.D((detail.get(c) or {}).get("weight_pct")))
-            drift_rows.append(row)
-        drift_df = pd.DataFrame(drift_rows).set_index("日期")
-        st.line_chart(drift_df)
-        st.caption("单位为仓位占比（%），按快照日期排列；用于观察各类资产仓位随时间的变化。")
 
         picked = st.selectbox("查看某日仓位明细", list(drift_df.index[::-1]), key="snap_pick")
         picked_snap = next((s for s in snapshots if str(s.get("date", "")) == picked), None)
@@ -896,14 +924,7 @@ with tab_data:
                     st.session_state["snapshots"] = current
                     st.rerun()
 
-    st.divider()
-    st.markdown("**存储与扩展说明**")
-    st.caption(f"当前存储适配器：{store.label}；本地缓存键 {DATA_KEY} / {SNAPSHOT_KEY}。")
-    st.caption(
-        "全部读写都经过 storage_adapter 的适配器接口（load_data / save_data / load_snapshots / save_snapshot）。"
-        "已登录时使用 SupabaseAdapter 读写云端三张表，断网自动回退到 LocalStorageAdapter 缓存；"
-        "新增其它后端只需再实现一个适配器，业务计算与页面代码无需改动。"
-    )
+    st.caption(f"存储适配器：{store.label}（本地缓存键 {DATA_KEY} / {SNAPSHOT_KEY}）。")
 
 st.divider()
 if not bridge.available:

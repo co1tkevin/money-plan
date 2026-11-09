@@ -309,20 +309,6 @@ if cloud_errors:
 
 data = get_data()
 
-# ---------------------------------------------------------------- 再平衡提醒（全页常驻）
-_breach_rows, _ = core.compute_rows(data)
-_plan_now = core.rebalance_plan(_breach_rows)
-if _plan_now["actions"]:
-    _pieces = [
-        f"{a['资产类别']} {float(a['偏离pp']):+.1f}pp → {a['动作']}约 {abs(float(a['建议金额'])):,.0f} 元"
-        for a in _plan_now["actions"][:4]
-    ]
-    _more = " 等" if len(_plan_now["actions"]) > 4 else ""
-    st.error(
-        "**再平衡提醒**（越过 ±5pp）：" + "；".join(_pieces) + _more
-        + f"。合计减仓 {abs(float(_plan_now['sell_total'])):,.0f} 元 / 加仓 {float(_plan_now['buy_total']):,.0f} 元。"
-    )
-
 tab_hold, tab_life, tab_trade, tab_review, tab_data = st.tabs(
     ["① 持仓与配置", "② 生命周期 · 定投", "③ 交易流水", "④ AI复盘", "⑤ 数据与快照"]
 )
@@ -387,73 +373,78 @@ with tab_hold:
     if abs(target_sum - 100) > core.D("0.05"):
         st.warning(f"目标占比合计为 {float(target_sum):.1f}%，不等于 100%，请核对录入。")
 
-    st.markdown("**分类明细**")
-    st.dataframe(
-        frame,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "基金": st.column_config.TextColumn(width="medium"),
-            "目标占比%": st.column_config.NumberColumn(format="%.2f"),
-            "实际占比%": st.column_config.NumberColumn(format="%.2f"),
-            "偏离pp": st.column_config.NumberColumn(format="%+.2f"),
-            "当前金额": st.column_config.NumberColumn(format="%.2f"),
-            "目标金额": st.column_config.NumberColumn(format="%.2f"),
-            "缺口金额": st.column_config.NumberColumn(format="%.2f", help="目标金额 − 当前金额，负数表示超出目标"),
-            "状态": st.column_config.TextColumn(width="small"),
-        },
-    )
-    st.caption("偏离规则：实际占比 − 目标占比 ＞ +5pp 或 ＜ −5pp 标为【越界观察】，仅标记，系统不做任何调仓。")
-
-    if breaks:
-        st.error("【越界观察】" + "；".join(f"{r['资产类别']} {float(r['偏离pp']):+.1f}pp" for r in breaks))
-    else:
-        st.success("当前无类别越过 ±5pp 观察线。")
-
     plan = core.rebalance_plan(rows)
-    st.markdown("**再平衡建议**")
+
+    # 调仓提醒：全系统唯一提醒位，越过 ±5pp 才出现
     if plan["actions"]:
-        plan_df = pd.DataFrame(plan["actions"])
-        for col in ("实际占比%", "目标占比%", "偏离pp", "当前金额", "目标金额", "建议金额"):
-            plan_df[col] = plan_df[col].map(float)
+        _pieces = [
+            f"{a['资产类别']} {float(a['偏离pp']):+.1f}pp → {a['动作']}约 {abs(float(a['建议金额'])):,.0f} 元"
+            for a in plan["actions"]
+        ]
+        st.warning(
+            "**需要再平衡**（越过 ±5pp）：" + "；".join(_pieces)
+            + f"。合计减仓 {abs(float(plan['sell_total'])):,.0f} 元 / 加仓 {float(plan['buy_total']):,.0f} 元。"
+            "金额按目标占比倒推，仅供参考，系统不执行任何交易。"
+        )
+    else:
+        st.success("各类别均在 ±5pp 以内，暂不需要再平衡。")
+
+    with st.expander("分类明细 · 再平衡计算 · 三大类汇总", expanded=False):
+        st.markdown("**分类明细**")
         st.dataframe(
-            plan_df,
+            frame,
             hide_index=True,
             width="stretch",
             column_config={
                 "基金": st.column_config.TextColumn(width="medium"),
-                "实际占比%": st.column_config.NumberColumn(format="%.2f"),
                 "目标占比%": st.column_config.NumberColumn(format="%.2f"),
+                "实际占比%": st.column_config.NumberColumn(format="%.2f"),
                 "偏离pp": st.column_config.NumberColumn(format="%+.2f"),
                 "当前金额": st.column_config.NumberColumn(format="%.2f"),
                 "目标金额": st.column_config.NumberColumn(format="%.2f"),
-                "建议金额": st.column_config.NumberColumn(
-                    format="%+.2f", help="正数=加仓，负数=减仓；按目标占比倒推，不含手续费与税费"
-                ),
+                "缺口金额": st.column_config.NumberColumn(format="%.2f", help="目标金额 − 当前金额，负数表示超出目标"),
+                "状态": st.column_config.TextColumn(width="small"),
             },
         )
-        st.caption(
-            f"合计：减仓 {abs(float(plan['sell_total'])):,.2f} 元 / 加仓 {float(plan['buy_total']):,.2f} 元。"
-            "金额仅按目标占比倒推，供参考，系统不执行任何交易。"
-        )
-    else:
-        st.caption("各类别均在 ±5pp 以内，暂不需要再平衡。")
+        st.caption("偏离规则：实际占比 − 目标占比 ＞ +5pp 或 ＜ −5pp 标为【越界观察】，仅标记，系统不做任何调仓。")
 
-    st.markdown("**三大类汇总**")
-    summary = core.group_summary(rows, total)
-    summary_df = pd.DataFrame(summary)
-    for col in ("目标占比%", "实际占比%", "差额pp"):
-        summary_df[col] = summary_df[col].map(float)
-    st.dataframe(
-        summary_df,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "目标占比%": st.column_config.NumberColumn(format="%.1f"),
-            "实际占比%": st.column_config.NumberColumn(format="%.1f"),
-            "差额pp": st.column_config.NumberColumn(format="%+.1f"),
-        },
-    )
+        if plan["actions"]:
+            st.markdown("**再平衡建议**")
+            plan_df = pd.DataFrame(plan["actions"])
+            for col in ("实际占比%", "目标占比%", "偏离pp", "当前金额", "目标金额", "建议金额"):
+                plan_df[col] = plan_df[col].map(float)
+            st.dataframe(
+                plan_df,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "基金": st.column_config.TextColumn(width="medium"),
+                    "实际占比%": st.column_config.NumberColumn(format="%.2f"),
+                    "目标占比%": st.column_config.NumberColumn(format="%.2f"),
+                    "偏离pp": st.column_config.NumberColumn(format="%+.2f"),
+                    "当前金额": st.column_config.NumberColumn(format="%.2f"),
+                    "目标金额": st.column_config.NumberColumn(format="%.2f"),
+                    "建议金额": st.column_config.NumberColumn(
+                        format="%+.2f", help="正数=加仓，负数=减仓；按目标占比倒推，不含手续费与税费"
+                    ),
+                },
+            )
+
+        st.markdown("**三大类汇总**")
+        summary = core.group_summary(rows, total)
+        summary_df = pd.DataFrame(summary)
+        for col in ("目标占比%", "实际占比%", "差额pp"):
+            summary_df[col] = summary_df[col].map(float)
+        st.dataframe(
+            summary_df,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "目标占比%": st.column_config.NumberColumn(format="%.1f"),
+                "实际占比%": st.column_config.NumberColumn(format="%.1f"),
+                "差额pp": st.column_config.NumberColumn(format="%+.1f"),
+            },
+        )
 
     # 行情（本地可选）
     with st.expander("行情（可选）：本地拉取基金净值"):

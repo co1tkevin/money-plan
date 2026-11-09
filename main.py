@@ -113,6 +113,32 @@ class BrowserStorageBridge:
 bridge = BrowserStorageBridge()
 
 
+def _flush_pending_writes() -> None:
+    """上一轮排队的 localStorage 写入重新挂载组件，直到组件确认成功。
+
+    登录等场景写完立刻 st.rerun()，普通 write 的 iframe 可能没执行就被刷掉；
+    这里用固定 widget key 让组件跨 rerun 保持挂载，保证写入真正落盘。
+    """
+    pending = st.session_state.get("pending_ls_writes")
+    if not pending or not bridge.available:
+        return
+    comp = _storage_component()
+    if comp is None:
+        return
+    for purpose, (skey, value) in list(pending.items()):
+        nonce = f"pend_{purpose}"
+        with SAVE_SLOT.container():
+            result = comp(action="set", skey=skey, value=value, nonce=nonce, key=f"ppls_pend_{purpose}", default=None)
+        if isinstance(result, dict) and result.get("nonce") == nonce and result.get("ok"):
+            st.session_state[f"ls_cache_{purpose}"] = value
+            pending.pop(purpose, None)
+    if not pending:
+        st.session_state.pop("pending_ls_writes", None)
+
+
+_flush_pending_writes()
+
+
 def _purpose_of(key: str) -> str:
     return "snap" if key == SNAPSHOT_KEY else "data"
 
@@ -158,12 +184,12 @@ def _restore_auth():
 
 
 def _persist_auth(auth: dict | None) -> None:
+    """登录态写入浏览器本地：先更新会话缓存，再排队等组件确认，防止被 rerun 打断。"""
     if not bridge.available:
         return
-    try:
-        bridge.write("auth", AUTH_KEY, json.dumps(auth, ensure_ascii=False) if auth else "")
-    except Exception:
-        pass
+    value = json.dumps(auth, ensure_ascii=False) if auth else ""
+    st.session_state["ls_cache_auth"] = value
+    st.session_state.setdefault("pending_ls_writes", {})["auth"] = (AUTH_KEY, value)
 
 
 def _reset_session_cache() -> None:
